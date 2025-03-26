@@ -450,6 +450,8 @@ class ClashMeta
                 $array['obfs'] = $server['obfs'];
                 $array['obfs-password'] = $server['obfs_password'];
             }
+            $array['up'] = $server['down_mbps'];
+            $array['down'] = $server['up_mbps'];
         } else {
             $array['type'] = 'hysteria';
             $array['auth_str'] = $password;
