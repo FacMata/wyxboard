@@ -6024,7 +6024,20 @@
                     placeholder: "\u8bf7\u8f93\u5165",
                     defaultValue: r.show_subscribe_expire,
                     onChange: e=>this.set("safe", "show_subscribe_expire", e.target.value)
-                })) : "")), f.a.createElement(s["a"].TabPane, {
+                })) : ""), f.a.createElement(m, {
+    title: "\u542f\u7528\u52a0\u5bc6\u8ba2\u9605",
+    description: "\u5f00\u542f\u540e\u542f\u7528 /encryption \u7aef\u70b9\uff0c\u5141\u8bb8\u5ba2\u6237\u7aef\u83b7\u53d6\u52a0\u5bc6\u8ba2\u9605\u5185\u5bb9\u3002"
+}, f.a.createElement(l["a"], {
+    checked: parseInt(r.subscribe_encrypted_enable),
+    onChange: e=>this.set("subscribe", "subscribe_encrypted_enable", e ? 1 : 0)
+})), parseInt(r.subscribe_encrypted_enable) ? f.a.createElement(m, {
+    isChildren: !0,
+    title: "\u5f3a\u5236\u52a0\u5bc6\u8ba2\u9605",
+    description: "\u5f00\u542f\u540e\u4f20\u7edf\u8ba2\u9605\u7aef\u70b9\u5c06\u59cb\u7ec8\u8fd4\u56de\u52a0\u5bc6\u5185\u5bb9\u3002"
+}, f.a.createElement(l["a"], {
+    checked: parseInt(r.subscribe_force_encrypted),
+    onChange: e=>this.set("subscribe", "subscribe_force_encrypted", e ? 1 : 0)
+})) : ""), f.a.createElement(s["a"].TabPane, {
                     tab: "\u5145\u503c",
                     key: "deposit"
                 }, f.a.createElement("div", {
