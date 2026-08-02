@@ -272,22 +272,32 @@ class OrderService
 
     public function cancel():bool
     {
-        $order = $this->order;
         DB::beginTransaction();
-        $order->status = 2;
-        if (!$order->save()) {
-            DB::rollBack();
-            return false;
-        }
-        if ($order->balance_amount) {
-            $userService = new UserService();
-            if (!$userService->addBalance($order->user_id, $order->balance_amount)) {
+        try {
+            $order = Order::where('id', $this->order->id)->lockForUpdate()->first();
+            if (!$order || (int)$order->status !== 0) {
                 DB::rollBack();
                 return false;
             }
+            $this->order = $order;
+            $order->status = 2;
+            if (!$order->save()) {
+                DB::rollBack();
+                return false;
+            }
+            if ($order->balance_amount) {
+                $userService = new UserService();
+                if (!$userService->addBalance($order->user_id, $order->balance_amount)) {
+                    DB::rollBack();
+                    return false;
+                }
+            }
+            DB::commit();
+            return true;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
         }
-        DB::commit();
-        return true;
     }
 
     private function setSpeedLimit($speedLimit)
