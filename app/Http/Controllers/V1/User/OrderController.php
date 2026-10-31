@@ -75,6 +75,14 @@ class OrderController extends Controller
 
     public function save(OrderSave $request)
     {
+        return DB::transaction(function () use ($request) {
+            $user = User::where('id', $request->user['id'])->lockForUpdate()->firstOrFail();
+            return $this->saveLocked($request, $user);
+        });
+    }
+
+    private function saveLocked(OrderSave $request, User $user)
+    {
         $userService = new UserService();
         if ($userService->isNotCompleteOrderByUserId($request->user['id'])) {
             abort(500, __('You have an unpaid or pending order, please try again later or cancel it'));
@@ -87,8 +95,6 @@ class OrderController extends Controller
             if ($amount >= 9999999 ) {
                 abort(500, __('Deposit amount too large, please contact the administrator'));
             }
-            $user = User::find($request->user['id']);
-            DB::beginTransaction();
             $order = new Order();
             $orderService = new OrderService($order);
             $order->user_id = $request->user['id'];
@@ -101,11 +107,9 @@ class OrderController extends Controller
             $orderService->setInvite($user);
 
             if (!$order->save()) {
-                DB::rollback();
                 abort(500, __('Failed to create order'));
             }
     
-            DB::commit();
     
             return response([
                 'data' => $order->trade_no
@@ -114,7 +118,6 @@ class OrderController extends Controller
         $planService = new PlanService($request->input('plan_id'));
 
         $plan = $planService->plan;
-        $user = User::find($request->user['id']);
 
         if (!$plan) {
             abort(500, __('Subscription plan does not exist'));
@@ -149,7 +152,6 @@ class OrderController extends Controller
             abort(500, __('This subscription has expired, please change to another subscription'));
         }
 
-        DB::beginTransaction();
         $order = new Order();
         $orderService = new OrderService($order);
         $order->user_id = $request->user['id'];
@@ -161,7 +163,6 @@ class OrderController extends Controller
         if ($request->input('coupon_code')) {
             $couponService = new CouponService($request->input('coupon_code'));
             if (!$couponService->use($order)) {
-                DB::rollBack();
                 abort(500, __('Coupon failed'));
             }
             $order->coupon_id = $couponService->getId();
@@ -175,14 +176,12 @@ class OrderController extends Controller
             $userService = new UserService();
             if ($remainingBalance > 0) {
                 if (!$userService->addBalance($order->user_id, - $order->total_amount)) {
-                    DB::rollBack();
                     abort(500, __('Insufficient balance'));
                 }
                 $order->balance_amount = $order->total_amount;
                 $order->total_amount = 0;
             } else {
                 if (!$userService->addBalance($order->user_id, - $user->balance)) {
-                    DB::rollBack();
                     abort(500, __('Insufficient balance'));
                 }
                 $order->balance_amount = $user->balance;
@@ -193,11 +192,9 @@ class OrderController extends Controller
         $orderService->setInvite($user);
 
         if (!$order->save()) {
-            DB::rollback();
             abort(500, __('Failed to create order'));
         }
 
-        DB::commit();
 
         return response([
             'data' => $order->trade_no

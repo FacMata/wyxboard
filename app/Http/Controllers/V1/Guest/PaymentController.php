@@ -17,7 +17,7 @@ class PaymentController extends Controller
             $paymentService = new PaymentService($method, null, $uuid);
             $verify = $paymentService->notify($request->input());
             if (!$verify) abort(500, 'verify error');
-            if (!$this->handle($verify['trade_no'], $verify['callback_no'])) {
+            if (!$this->handle($verify['trade_no'], $verify['callback_no'], $paymentService->getId())) {
                 abort(500, 'handle error');
             }
             return(isset($verify['custom_result']) ? $verify['custom_result'] : 'success');
@@ -26,15 +26,16 @@ class PaymentController extends Controller
         }
     }
 
-    private function handle($tradeNo, $callbackNo)
+    private function handle($tradeNo, $callbackNo, int $paymentId)
     {
         $order = Order::where('trade_no', $tradeNo)->first();
         if (!$order) {
             abort(500, 'order is not found');
         }
+        if ((int) $order->payment_id !== $paymentId) abort(500, 'order payment mismatch');
         if ($order->status !== 0) return true;
         $orderService = new OrderService($order);
-        if (!$orderService->paid($callbackNo)) {
+        if (!$orderService->paid($callbackNo, $paymentId)) {
             return false;
         }
         $telegramService = new TelegramService();

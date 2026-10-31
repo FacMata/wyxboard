@@ -30,8 +30,14 @@ class UserController extends Controller
             abort(500, __('The user does not exist'));
         }
         $authService = new AuthService($user);
+        $authorization = $request->input('auth_data') ?? $request->header('authorization');
+        $sessions = $authService->getSessions();
+        foreach ($sessions as &$session) {
+            if (($session['auth_data'] ?? null) !== $authorization) $session['auth_data'] = '';
+        }
+        unset($session);
         return response([
-            'data' => $authService->getSessions()
+            'data' => $sessions
         ]);
     }
 
@@ -455,7 +461,10 @@ class UserController extends Controller
 
         $code = Helper::guid();
         $key = CacheKey::get('TEMP_TOKEN', $code);
-        Cache::put($key, $user->id, 60);
+        Cache::put($key, [
+            'user_id' => (int) $user->id,
+            'account_fingerprint' => \App\Services\EmailIdentity::fingerprint($user),
+        ], 60);
         $redirect = '/#/login?verify=' . $code . '&redirect=' . ($request->input('redirect') ? $request->input('redirect') : 'dashboard');
         if (config('v2board.app_url')) {
             $url = config('v2board.app_url') . $redirect;

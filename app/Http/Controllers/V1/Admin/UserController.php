@@ -18,6 +18,7 @@ use App\Services\AuthService;
 use App\Utils\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
 
 class UserController extends Controller
@@ -156,13 +157,16 @@ class UserController extends Controller
             $params['invite_user_id'] = null;
         }
 
-        if (isset($params['banned']) && (int)$params['banned'] === 1) {
-            $authService = new AuthService($user);
-            $authService->removeAllSession();
-        }
-
         try {
-            $user->update($params);
+            DB::transaction(function () use ($user, $params) {
+                $lockedUser = User::where('id', $user->id)->lockForUpdate()->firstOrFail();
+                $lockedUser->update($params);
+                if ($lockedUser->wasChanged(['password', 'is_admin', 'is_staff', 'banned'])) {
+                    DB::afterCommit(function () use ($lockedUser) {
+                        (new AuthService($lockedUser))->removeAllSession();
+                    });
+                }
+            });
         } catch (\Exception $e) {
             abort(500, '保存失败');
         }
@@ -223,16 +227,18 @@ class UserController extends Controller
             if (User::where('email', $user['email'])->first()) {
                 abort(500, '邮箱已存在于系统中');
             }
-            $user['password'] = password_hash($request->input('password') ?? $user['email'], PASSWORD_DEFAULT);
+            $password = $request->input('password') ?? Str::random(20);
+            $user['password'] = password_hash($password, PASSWORD_DEFAULT);
             if (!User::create($user)) {
                 abort(500, '生成失败');
             }
             return response([
-                'data' => true
-            ]);
+                'data' => true,
+                'credentials' => ['email' => $user['email'], 'password' => $password],
+            ])->header('Cache-Control', 'no-store');
         }
         if ($request->input('generate_count')) {
-            $this->multiGenerate($request);
+            return $this->multiGenerate($request);
         }
     }
 
@@ -245,6 +251,7 @@ class UserController extends Controller
             }
         }
         $users = [];
+        $passwords = [];
         for ($i = 0;$i < $request->input('generate_count');$i++) {
             $user = [
                 'email' => Helper::randomChar(6) . '@' . $request->input('email_suffix'),
@@ -258,7 +265,8 @@ class UserController extends Controller
                 'created_at' => time(),
                 'updated_at' => time()
             ];
-            $user['password'] = password_hash($request->input('password') ?? $user['email'], PASSWORD_DEFAULT);
+            $passwords[$i] = $request->input('password') ?? Str::random(20);
+            $user['password'] = password_hash($passwords[$i], PASSWORD_DEFAULT);
             array_push($users, $user);
         }
         DB::beginTransaction();
@@ -268,14 +276,14 @@ class UserController extends Controller
         }
         DB::commit();
         $data = "账号,密码,过期时间,UUID,创建时间,订阅地址\r\n";
-        foreach($users as $user) {
+        foreach($users as $index => $user) {
             $expireDate = $user['expired_at'] === NULL ? '长期有效' : date('Y-m-d H:i:s', $user['expired_at']);
             $createDate = date('Y-m-d H:i:s', $user['created_at']);
-            $password = $request->input('password') ?? $user['email'];
+            $password = $passwords[$index];
             $subscribeUrl = Helper::getSubscribeUrl($user['token']);
             $data .= "{$user['email']},{$password},{$expireDate},{$user['uuid']},{$createDate},{$subscribeUrl}\r\n";
         }
-        echo $data;
+        return response($data, 200, ['Content-Type' => 'text/csv; charset=UTF-8', 'Cache-Control' => 'no-store']);
     }
 
     public function sendMail(UserSendMail $request)
@@ -309,13 +317,13 @@ class UserController extends Controller
         $builder = User::orderBy($sort, $sortType);
         $this->filter($request, $builder);
         try {
-            $builder->each(function ($user){
-                $authService = new AuthService($user);
-                $authService->removeAllSession();
+            DB::transaction(function () use ($builder) {
+                $users = (clone $builder)->reorder('id')->lockForUpdate()->get();
+                User::whereIn('id', $users->pluck('id'))->update(['banned' => 1]);
+                DB::afterCommit(function () use ($users) {
+                    foreach ($users as $user) (new AuthService($user))->removeAllSession();
+                });
             });
-            $builder->update([
-                'banned' => 1
-            ]);
         } catch (\Exception $e) {
             abort(500, '处理失败');
         }

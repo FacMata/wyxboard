@@ -45,9 +45,9 @@ class AuthService
             if (!is_string($jwt) || $jwt === '') {
                 return false;
             }
+            $data = (array)JWT::decode($jwt, new Key(config('app.key'), 'HS256'));
+            if (!self::checkSession($data['id'], $data['session'])) return false;
             if (!Cache::has($jwt)) {
-                $data = (array)JWT::decode($jwt, new Key(config('app.key'), 'HS256'));
-                if (!self::checkSession($data['id'], $data['session'])) return false;
                 $user = User::select([
                     'id',
                     'email',
@@ -92,11 +92,13 @@ class AuthService
     {
         $cacheKey = CacheKey::get("USER_SESSIONS", $this->user->id);
         $sessions = (array)Cache::get($cacheKey, []);
+        $authData = $sessions[$sessionId]['auth_data'] ?? null;
         unset($sessions[$sessionId]);
         if (!Cache::put(
             $cacheKey,
             $sessions
         )) return false;
+        if (is_string($authData) && $authData !== '') Cache::forget($authData);
         return true;
     }
 

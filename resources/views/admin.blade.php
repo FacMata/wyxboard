@@ -30,7 +30,7 @@
 <div id="root"></div>
 <script src="/assets/admin/vendors.async.js?v={{$version}}"></script>
 <script src="/assets/admin/components.async.js?v={{$version}}"></script>
-<script src="/assets/admin/umi.js?v={{$version}}"></script>
+<script src="/assets/admin/umi.js?v={{$version}}&security=20261031"></script>
 </body>
 
 </html>

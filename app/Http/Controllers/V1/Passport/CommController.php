@@ -7,6 +7,7 @@ use App\Http\Requests\Passport\CommSendEmailVerify;
 use App\Jobs\SendEmailJob;
 use App\Models\InviteCode;
 use App\Models\User;
+use App\Services\EmailIdentity;
 use App\Utils\CacheKey;
 use App\Utils\Dict;
 use App\Utils\Helper;
@@ -46,7 +47,11 @@ class CommController extends Controller
         $email = $request->input('email');
         $cacheKeyEmail = strtolower(trim((string)$email));
         $isforget = $request->input('isforget');
-        $email_exists = User::where('email', $email)->exists();
+        $user = User::where('email', $email)->first();
+        if ($user && !EmailIdentity::matches($email, $user->email)) {
+            abort(500, __('This email is not registered in the system'));
+        }
+        $email_exists = $user !== null;
         //检查是否在白名单内
         if ((int)config('v2board.email_whitelist_enable', 0)) {
             if (!Helper::emailSuffixVerify(
@@ -74,11 +79,11 @@ class CommController extends Controller
         if (Cache::get(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $cacheKeyEmail))) {
             abort(500, __('Email verification code has been sent, please request again later'));
         }
-        $code = (string)rand(100000, 999999);
+        $code = (string)random_int(100000, 999999);
         $subject = config('v2board.app_name', 'V2Board') . __('Email verification code');
 
         SendEmailJob::dispatch([
-            'email' => $email,
+            'email' => $user ? $user->email : $email,
             'subject' => $subject,
             'template_name' => 'verify',
             'template_value' => [
@@ -89,6 +94,12 @@ class CommController extends Controller
         ]);
 
         Cache::put(CacheKey::get('EMAIL_VERIFY_CODE', $cacheKeyEmail), $code, 300);
+        if ($user) {
+            Cache::put(CacheKey::get('PASSWORD_RESET_CHALLENGE', $cacheKeyEmail), [
+                'purpose' => 'password_reset', 'code' => $code, 'user_id' => (int) $user->id,
+                'account_fingerprint' => EmailIdentity::fingerprint($user),
+            ], 300);
+        }
         Cache::put(CacheKey::get('LAST_SEND_EMAIL_VERIFY_TIMESTAMP', $cacheKeyEmail), time(), 60);
         return response([
             'data' => true

@@ -17,8 +17,12 @@ class PaymentService
         $this->method = $method;
         $this->class = '\\App\\Payments\\' . $this->method;
         if (!class_exists($this->class)) abort(500, 'gate is not found');
-        if ($id) $payment = Payment::find($id)->toArray();
-        if ($uuid) $payment = Payment::where('uuid', $uuid)->first()->toArray();
+        $record = null;
+        if ($id) $record = Payment::find($id);
+        if ($uuid) $record = Payment::where('uuid', $uuid)->first();
+        if (($id || $uuid) && !$record) abort(500, 'gate is not found');
+        if ($record && strcasecmp($record->payment, $method) !== 0) abort(500, 'gate method mismatch');
+        if ($record) $payment = $record->toArray();
         $this->config = [];
         if (isset($payment)) {
             $this->config = $payment['config'];
@@ -34,6 +38,11 @@ class PaymentService
     {
         if (!$this->config['enable']) abort(500, 'gate is not enable');
         return $this->payment->notify($params);
+    }
+
+    public function getId(): int
+    {
+        return (int) $this->config['id'];
     }
 
     public function pay($order)

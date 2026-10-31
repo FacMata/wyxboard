@@ -81863,14 +81863,14 @@
                                     }
                                     return e.abrupt("return");
                                 case 9:
-                                    return n.generate_count && (o = new Blob([t.buffer],{
-                                        type: "text/plain,charset=UTF-8"
+                                    return (n.generate_count || n.email_prefix) && (o = new Blob([n.email_prefix ? JSON.stringify(t.credentials, null, 2) : t.buffer],{
+                                        type: n.email_prefix ? "application/json" : "text/csv;charset=UTF-8"
                                     }),
                                     s = window.URL.createObjectURL(o),
                                     c = document.createElement("a"),
                                     c.href = s,
                                     c.style.display = "none",
-                                    c.download = "USER ".concat(l()().format("YYYY-MM-DD HH:mm:ss"), ".csv"),
+                                    c.download = "USER ".concat(l()().format("YYYY-MM-DD HH:mm:ss"), n.email_prefix ? ".json" : ".csv"),
                                     c.click(),
                                     window.URL.revokeObjectURL(s)),
                                     e.next = 12,

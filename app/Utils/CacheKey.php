@@ -6,6 +6,7 @@ class CacheKey
 {
     CONST KEYS = [
         'EMAIL_VERIFY_CODE' => '邮箱验证码',
+        'PASSWORD_RESET_CHALLENGE' => '绑定账户的密码恢复验证码',
         'LAST_SEND_EMAIL_VERIFY_TIMESTAMP' => '最后一次发送邮箱验证码时间',
         'SERVER_VMESS_ONLINE_USER' => '节点在线用户',
         'SERVER_VMESS_LAST_CHECK_AT' => '节点最后检查时间',

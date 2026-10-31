@@ -28,40 +28,40 @@ class OrderService
 
     public function open()
     {
-        $order = $this->order;
-        $this->user = User::find($order->user_id);
+        DB::transaction(function () {
+            $this->openLocked();
+        });
+    }
+
+    private function openLocked()
+    {
+        $this->user = User::where('id', $this->order->user_id)->lockForUpdate()->firstOrFail();
+        $order = Order::where('id', $this->order->id)->lockForUpdate()->firstOrFail();
+        $this->order = $order;
+        if ((int) $order->status !== 1) return;
         if ($order->type == 9) {
-            DB::beginTransaction();
             $this->user->balance += $order->total_amount + $this->getbounus($order->total_amount);
 
             if (!$this->user->save()) {
-                DB::rollBack();
                 abort(500, '充值失败');
             }
             $order->status = 3;
             if (!$order->save()) {
-                DB::rollBack();
                 abort(500, '充值失败');
             }
-            DB::commit();
             return;
         }
 
         $plan = Plan::find($order->plan_id);
 
-        if ($order->refund_amount) {
-            $this->user->balance = $this->user->balance + $order->refund_amount;
-        }
-        DB::beginTransaction();
         if ($order->surplus_order_ids) {
-            try {
-                Order::whereIn('id', $order->surplus_order_ids)->update([
-                    'status' => 4
-                ]);
-            } catch (\Exception $e) {
-                DB::rollback();
-                abort(500, '开通失败');
-            }
+            $sourceIds = array_values(array_unique($order->surplus_order_ids));
+            $claimed = Order::whereIn('id', $sourceIds)->where('user_id', $order->user_id)
+                ->where('status', 3)->update(['status' => 4]);
+            if ($claimed !== count($sourceIds)) abort(409, 'SURPLUS_ALREADY_CONSUMED');
+        }
+        if ($order->refund_amount) {
+            $this->user->balance += $order->refund_amount;
         }
         switch ((string)$order->period) {
             case 'onetime_price':
@@ -89,16 +89,13 @@ class OrderService
         $this->setSpeedLimit($plan->speed_limit);
 
         if (!$this->user->save()) {
-            DB::rollBack();
             abort(500, '开通失败');
         }
         $order->status = 3;
         if (!$order->save()) {
-            DB::rollBack();
             abort(500, '开通失败');
         }
 
-        DB::commit();
     }
 
 
@@ -254,16 +251,24 @@ class OrderService
         $order->surplus_order_ids = array_column($orders, 'id');
     }
 
-    public function paid(string $callbackNo)
+    public function paid(string $callbackNo, ?int $paymentId = null)
     {
-        $order = $this->order;
-        if ($order->status !== 0) return true;
-        $order->status = 1;
-        $order->paid_at = time();
-        $order->callback_no = $callbackNo;
-        if (!$order->save()) return false;
+        $shouldDispatch = DB::transaction(function () use ($callbackNo, $paymentId) {
+            $order = Order::where('id', $this->order->id)->lockForUpdate()->first();
+            if ($paymentId !== null && (!$order || (int) $order->payment_id !== $paymentId)) {
+                abort(500, 'order payment mismatch');
+            }
+            if (!$order || (int) $order->status !== 0) return false;
+            $this->order = $order;
+            $order->status = 1;
+            $order->paid_at = time();
+            $order->callback_no = $callbackNo;
+            $order->saveOrFail();
+            return true;
+        });
+        if (!$shouldDispatch) return true;
         try {
-            OrderHandleJob::dispatch($order->trade_no);
+            OrderHandleJob::dispatch($this->order->trade_no);
         } catch (\Exception $e) {
             return false;
         }
@@ -272,27 +277,20 @@ class OrderService
 
     public function cancel():bool
     {
-        $order = $this->order;
-        DB::beginTransaction();
-        $affected = Order::where('id', $order->id)
-            ->where('status', 0)
-            ->update([
-                'status' => 2
-            ]);
-
-        if ($affected !== 1) {
-            DB::rollBack();
-            return false;
-        }
-        if ($order->balance_amount) {
-            $userService = new UserService();
-            if (!$userService->addBalance($order->user_id, $order->balance_amount)) {
-                DB::rollBack();
-                return false;
+        return DB::transaction(function () {
+            User::where('id', $this->order->user_id)->lockForUpdate()->firstOrFail();
+            $order = Order::where('id', $this->order->id)->lockForUpdate()->first();
+            if (!$order || (int) $order->status !== 0) return false;
+            $this->order = $order;
+            $order->status = 2;
+            $order->saveOrFail();
+            if ($order->balance_amount) {
+                if (!(new UserService())->addBalance($order->user_id, $order->balance_amount)) {
+                    abort(500, __('Insufficient balance'));
+                }
             }
-        }
-        DB::commit();
-        return true;
+            return true;
+        });
     }
 
     private function setSpeedLimit($speedLimit)

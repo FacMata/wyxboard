@@ -11,11 +11,13 @@ use App\Models\InviteCode;
 use App\Models\Plan;
 use App\Models\User;
 use App\Services\AuthService;
+use App\Services\EmailIdentity;
 use App\Utils\CacheKey;
 use App\Utils\Dict;
 use App\Utils\Helper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use ReCaptcha\ReCaptcha;
 
 class AuthController extends Controller
@@ -194,16 +196,19 @@ class AuthController extends Controller
 
         if ($request->input('verify')) {
             $key =  CacheKey::get('TEMP_TOKEN', $request->input('verify'));
-            $userId = Cache::get($key);
-            if (!$userId) {
+            $ticket = Cache::get($key);
+            if (!is_array($ticket)) {
                 abort(500, __('Token error'));
             }
-            $user = User::find($userId);
+            $user = User::find($ticket['user_id']);
             if (!$user) {
                 abort(500, __('The user does not '));
             }
             if ($user->banned) {
                 abort(500, __('Your account has been suspended'));
+            }
+            if (!hash_equals(EmailIdentity::fingerprint($user), $ticket['account_fingerprint'])) {
+                abort(500, __('Token error'));
             }
             Cache::forget($key);
             $authService = new AuthService($user);
@@ -223,7 +228,11 @@ class AuthController extends Controller
 
         $code = Helper::guid();
         $key = CacheKey::get('TEMP_TOKEN', $code);
-        Cache::put($key, $user['id'], 60);
+        $account = User::findOrFail($user['id']);
+        Cache::put($key, [
+            'user_id' => (int) $account->id,
+            'account_fingerprint' => EmailIdentity::fingerprint($account),
+        ], 60);
         $redirect = '/#/login?verify=' . $code . '&redirect=' . ($request->input('redirect') ? $request->input('redirect') : 'dashboard');
         if (config('v2board.app_url')) {
             $url = config('v2board.app_url') . $redirect;
@@ -255,21 +264,26 @@ class AuthController extends Controller
             abort(500, __('Reset failed, Please try again later'));
         }
 
-        $cachedCode = Cache::get(CacheKey::get('EMAIL_VERIFY_CODE', $cacheKeyEmail));
-        if ($cachedCode === null || $cachedCode === '' || !hash_equals((string)$cachedCode, $inputCode)) {
+        $challengeKey = CacheKey::get('PASSWORD_RESET_CHALLENGE', $cacheKeyEmail);
+        $challenge = Cache::get($challengeKey);
+        if (!is_array($challenge) || ($challenge['purpose'] ?? null) !== 'password_reset'
+            || !hash_equals($challenge['code'], $inputCode)) {
             Cache::put($forgetRequestLimitKey, $forgetRequestLimit + 1, 300);
             abort(500, __('Incorrect email verification code'));
         }
-        $user = User::where('email', $email)->first();
-        if (!$user) {
-            abort(500, __('This email is not registered in the system'));
-        }
-        $user->password      = password_hash($password, PASSWORD_DEFAULT);
-        $user->password_algo = null;
-        $user->password_salt = null;
-        if (!$user->save()) {
-            abort(500, __('Reset failed'));
-        }
+        $user = DB::transaction(function () use ($challenge, $email, $password) {
+            $user = User::where('id', $challenge['user_id'])->lockForUpdate()->first();
+            if (!$user || !EmailIdentity::matches($email, $user->email)
+                || !hash_equals(EmailIdentity::fingerprint($user), $challenge['account_fingerprint'])) {
+                abort(500, __('Incorrect email verification code'));
+            }
+            $user->password = password_hash($password, PASSWORD_DEFAULT);
+            $user->password_algo = null;
+            $user->password_salt = null;
+            if (!$user->save()) abort(500, __('Reset failed'));
+            return $user;
+        });
+        Cache::forget($challengeKey);
         Cache::forget(CacheKey::get('EMAIL_VERIFY_CODE', $cacheKeyEmail));
         (new AuthService($user))->removeAllSession();
         return response([
