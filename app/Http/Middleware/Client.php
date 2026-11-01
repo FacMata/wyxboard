@@ -22,6 +22,9 @@ class Client
         if (empty($token)) {
             abort(403, 'token is null');
         }
+        if (!is_string($token)) {
+            abort(403, 'token is error');
+        }
         $submethod = (int)config('v2board.show_subscribe_method', 0);
         switch ($submethod) {
             case 0:
@@ -64,6 +67,9 @@ class Client
                 break;
             default:
                 break;
+        }
+        if (!is_string($token)) {
+            abort(403, 'token is error');
         }
         $user = User::where('token', $token)->first();
         if (!$user) {
